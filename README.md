@@ -29,9 +29,21 @@ cd automatic-backup
 
 ### 2. Configure
 
-**Option A: Using .env file (Recommended for security)**
+**Option A: Multi-Job Backup (Recommended for multiple directories)**
 
-Copy the example files and edit with your settings:
+If you need to backup multiple directories (e.g., Docker configs, documents, photos):
+
+```bash
+cp .env.multi-job.example .env
+cp config.multi-job.example.json config.json
+nano .env
+```
+
+This sets up multiple backup jobs in one configuration. See the "Multiple Backup Jobs" section for details.
+
+**Option B: Single Directory with .env (Recommended for security)**
+
+For backing up a single directory:
 
 ```bash
 cp .env.example .env
@@ -41,7 +53,7 @@ nano .env
 
 The `.env` file keeps your passwords and credentials separate from the config. Set your sensitive values in `.env` and the config will automatically use them.
 
-**Option B: Direct configuration**
+**Option C: Direct configuration**
 
 Copy and edit the config file directly:
 
@@ -150,6 +162,147 @@ The config file uses `${VARIABLE}` syntax to reference environment variables:
 - ✅ `.env` is automatically excluded by `.gitignore`
 
 **Alternative:** You can also set environment variables in your shell or use system environment variables. The script will automatically expand them.
+
+### Multiple Backup Jobs (Recommended for Multiple Directories)
+
+The script supports backing up multiple source directories in a single run, making it perfect for backing up different projects or categories of files.
+
+**Benefits of Multi-Job Configuration:**
+- ✅ Single cron job backs up everything
+- ✅ Consolidated email report for all backups
+- ✅ Each job tracks changes independently
+- ✅ Different source/destination paths per job
+- ✅ Named jobs for easy identification
+
+**Setup Multi-Job Backups:**
+
+1. **Use the multi-job configuration template:**
+
+```bash
+cp config.multi-job.example.json config.json
+cp .env.multi-job.example .env
+nano .env
+```
+
+2. **Configure your .env with all source paths:**
+
+```bash
+# .env
+SOURCE_PATH_BOOKSTACK=/Documents/projects/bookstack-wiki
+SOURCE_PATH_DOCKER=/home/user/docker
+SOURCE_PATH_DOCUMENTS=/home/user/Documents
+SOURCE_PATH_PHOTOS=/home/user/Pictures
+NAS_PATH=/mnt/nas/backup
+```
+
+3. **Your config.json uses the jobs array:**
+
+```json
+{
+  "email_enabled": true,
+  "email": { ... },
+  "jobs": [
+    {
+      "name": "Bookstack Wiki",
+      "source_path": "${SOURCE_PATH_BOOKSTACK}",
+      "nas_path": "${NAS_PATH}/bookstack",
+      "state_file": ".backup_state_bookstack.json"
+    },
+    {
+      "name": "Docker Configs",
+      "source_path": "${SOURCE_PATH_DOCKER}",
+      "nas_path": "${NAS_PATH}/docker",
+      "state_file": ".backup_state_docker.json"
+    },
+    {
+      "name": "Personal Documents",
+      "source_path": "${SOURCE_PATH_DOCUMENTS}",
+      "nas_path": "${NAS_PATH}/documents",
+      "state_file": ".backup_state_documents.json"
+    }
+  ]
+}
+```
+
+**How It Works:**
+- Each job runs sequentially during the backup
+- Each job has its own state file to track changes independently
+- You get one consolidated email showing all job results
+- Global settings (email, mount_command) are shared across all jobs
+- Job-specific settings override global settings
+
+**Example Multi-Job Email Report:**
+
+```
+Automatic Backup Report - Multiple Jobs
+========================================
+Timestamp: 2026-01-12 04:00:15
+
+Overall Summary:
+----------------
+Total jobs: 4
+Successful: 4
+Failed: 0
+Total files changed: 23
+
+============================================================
+Job Details:
+============================================================
+
+Job: Bookstack Wiki
+Source: /Documents/projects/bookstack-wiki
+Destination: /mnt/nas/backup/bookstack
+Status: SUCCESS
+
+Summary:
+--------
+New files: 3
+Modified files: 2
+Total changes: 5
+
+------------------------------------------------------------
+
+Job: Docker Configs
+Source: /home/user/docker
+Destination: /mnt/nas/backup/docker
+Status: SUCCESS
+
+Summary:
+--------
+New files: 0
+Modified files: 1
+Total changes: 1
+
+------------------------------------------------------------
+```
+
+**Adding New Backup Jobs:**
+
+Simply add a new entry to the `jobs` array in your config.json:
+
+```json
+{
+  "jobs": [
+    ...existing jobs...,
+    {
+      "name": "New Project",
+      "source_path": "${SOURCE_PATH_NEW_PROJECT}",
+      "nas_path": "${NAS_PATH}/new-project",
+      "state_file": ".backup_state_new_project.json"
+    }
+  ]
+}
+```
+
+And add the source path to your .env:
+
+```bash
+SOURCE_PATH_NEW_PROJECT=/path/to/new/project
+```
+
+**Backward Compatibility:**
+
+The single-job configuration format is still fully supported. If your config doesn't have a `jobs` array, it will work exactly as before.
 
 ### Email Setup (Gmail Example)
 
@@ -330,12 +483,23 @@ Examples:
 
 ### Multiple Backup Configurations
 
-You can create multiple configuration files and run different backup jobs:
+**Recommended Approach: Use Multi-Job Configuration**
+
+The preferred way to backup multiple directories is using the `jobs` array in a single config file (see "Multiple Backup Jobs" section above). This provides:
+- One cron job for all backups
+- Consolidated email reports
+- Easier management
+
+**Alternative: Multiple Config Files**
+
+You can also create separate configuration files and run them independently:
 
 ```bash
 python3 backup_to_nas.py config_docker.json
 python3 backup_to_nas.py config_documents.json
 ```
+
+This approach requires multiple cron jobs and generates separate emails for each backup.
 
 ### Backup State Reset
 
@@ -359,18 +523,20 @@ rm .backup_state.json
 
 ```
 automatic-backup/
-├── backup_to_nas.py          # Main backup script
-├── config.json                # Your configuration (create from example)
-├── config.example.json        # Example configuration with ${VAR} placeholders
-├── .env                       # Your credentials (create from .env.example)
-├── .env.example               # Example environment variables
-├── setup_cron.sh              # Cron installation script
-├── run_backup.sh              # Manual backup runner
-├── .gitignore                 # Protects sensitive files
-├── .backup_state.json         # Backup state (auto-generated)
-├── logs/                      # Backup logs directory
+├── backup_to_nas.py               # Main backup script
+├── config.json                    # Your configuration (create from example)
+├── config.example.json            # Single-job example with ${VAR} placeholders
+├── config.multi-job.example.json  # Multi-job example (recommended)
+├── .env                           # Your credentials (create from .env.example)
+├── .env.example                   # Single-job environment variables
+├── .env.multi-job.example         # Multi-job environment variables
+├── setup_cron.sh                  # Cron installation script
+├── run_backup.sh                  # Manual backup runner
+├── .gitignore                     # Protects sensitive files
+├── .backup_state*.json            # Backup state files (auto-generated, one per job)
+├── logs/                          # Backup logs directory
 │   └── backup.log
-└── README.md                  # This file
+└── README.md                      # This file
 ```
 
 ## License

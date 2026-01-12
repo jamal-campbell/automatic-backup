@@ -28,6 +28,7 @@ class BackupManager:
         self.state_file = Path(self.config.get('state_file', '.backup_state.json'))
         self.backup_log = []
         self.timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.current_job_config = {}  # Track current job for reporting
 
     def load_env_file(self):
         """Load environment variables from .env file"""
@@ -303,17 +304,19 @@ class BackupManager:
         self.backup_log.append(message)
         print(message)
 
-    def create_report(self, changes, success):
-        """Create backup report for email"""
+    def create_report(self, changes, success, job_name=None):
+        """Create backup report for a single job"""
         total_changes = len(changes['new']) + len(changes['modified']) + len(changes['deleted'])
 
-        report = f"""
-Automatic Backup Report
-=======================
-Timestamp: {self.timestamp}
-Source: {self.config['source_path']}
-Destination: {self.config['nas_path']}
+        # Get source/dest from job_config if available, otherwise from main config
+        source = self.current_job_config.get('source_path', self.config.get('source_path', 'N/A'))
+        dest = self.current_job_config.get('nas_path', self.config.get('nas_path', 'N/A'))
 
+        job_header = f"Job: {job_name}\n" if job_name else ""
+
+        report = f"""
+{job_header}Source: {source}
+Destination: {dest}
 Status: {'SUCCESS' if success else 'FAILED'}
 
 Summary:
@@ -334,11 +337,55 @@ Total changes: {total_changes}
 
         return report
 
-    def run(self):
-        """Main backup execution"""
-        self.log(f"Starting backup process at {self.timestamp}")
-        self.log(f"Source: {self.config['source_path']}")
-        self.log(f"Destination: {self.config['nas_path']}")
+    def create_consolidated_report(self, job_results):
+        """Create consolidated report for multiple jobs"""
+        total_jobs = len(job_results)
+        successful_jobs = sum(1 for r in job_results if r['success'])
+        failed_jobs = total_jobs - successful_jobs
+        total_files_changed = sum(r['changes_count'] for r in job_results)
+
+        report = f"""
+Automatic Backup Report - Multiple Jobs
+========================================
+Timestamp: {self.timestamp}
+
+Overall Summary:
+----------------
+Total jobs: {total_jobs}
+Successful: {successful_jobs}
+Failed: {failed_jobs}
+Total files changed: {total_files_changed}
+
+"""
+
+        # Add details for each job
+        report += "=" * 60 + "\n"
+        report += "Job Details:\n"
+        report += "=" * 60 + "\n\n"
+
+        for result in job_results:
+            report += result['report']
+            report += "\n" + "-" * 60 + "\n"
+
+        return report
+
+    def run_single_job(self, job_config, job_name=None):
+        """Run a single backup job"""
+        # Store current job config for reporting
+        self.current_job_config = job_config
+
+        # Reset backup log for this job
+        self.backup_log = []
+
+        job_label = f" [{job_name}]" if job_name else ""
+        self.log(f"Starting backup job{job_label}")
+        self.log(f"Source: {job_config['source_path']}")
+        self.log(f"Destination: {job_config['nas_path']}")
+
+        # Use job-specific state file if provided, otherwise use default
+        original_state_file = self.state_file
+        if 'state_file' in job_config:
+            self.state_file = Path(job_config['state_file'])
 
         # Load previous state
         previous_state = self.load_state()
@@ -346,13 +393,19 @@ Total changes: {total_changes}
 
         # Scan current directory
         self.log("Scanning source directory...")
-        current_inventory = self.scan_directory(self.config['source_path'])
+        current_inventory = self.scan_directory(job_config['source_path'])
 
         if not current_inventory:
             self.log("Error: No files found or unable to scan source directory")
-            subject = f"Backup FAILED - {self.timestamp}"
-            self.send_email(subject, self.create_report({'new': [], 'modified': [], 'deleted': [], 'unchanged': []}, False))
-            return False
+            changes = {'new': [], 'modified': [], 'deleted': [], 'unchanged': []}
+            self.state_file = original_state_file
+            return {
+                'success': False,
+                'changes': changes,
+                'changes_count': 0,
+                'report': self.create_report(changes, False, job_name),
+                'job_name': job_name or 'default'
+            }
 
         # Detect changes
         self.log("Detecting changes...")
@@ -364,9 +417,20 @@ Total changes: {total_changes}
         success = True
 
         if total_changes > 0:
-            # Perform backup
+            # Perform backup - temporarily update config for sync_to_nas
+            original_config_source = self.config.get('source_path')
+            original_config_nas = self.config.get('nas_path')
+            self.config['source_path'] = job_config['source_path']
+            self.config['nas_path'] = job_config['nas_path']
+
             self.log("Syncing to NAS...")
             success = self.sync_to_nas(changes)
+
+            # Restore original config
+            if original_config_source:
+                self.config['source_path'] = original_config_source
+            if original_config_nas:
+                self.config['nas_path'] = original_config_nas
 
             if success:
                 # Update state
@@ -376,19 +440,91 @@ Total changes: {total_changes}
                 }
                 self.save_state(new_state)
                 self.log("Backup completed successfully")
-                subject = f"Backup SUCCESS - {len(changes['new']) + len(changes['modified'])} files updated - {self.timestamp}"
             else:
                 self.log("Backup completed with errors")
-                subject = f"Backup PARTIAL - Some errors occurred - {self.timestamp}"
         else:
             self.log("No changes detected. Skipping backup.")
-            subject = f"Backup SKIPPED - No changes - {self.timestamp}"
 
-        # Send email report
-        report = self.create_report(changes, success)
-        self.send_email(subject, report)
+        # Restore original state file
+        self.state_file = original_state_file
 
-        return success
+        return {
+            'success': success and total_changes >= 0,
+            'changes': changes,
+            'changes_count': total_changes,
+            'report': self.create_report(changes, success, job_name),
+            'job_name': job_name or 'default'
+        }
+
+    def run(self):
+        """Main backup execution - supports both single and multiple jobs"""
+        self.log(f"Starting backup process at {self.timestamp}")
+
+        # Check if config has multiple jobs or single job
+        if 'jobs' in self.config:
+            # Multiple jobs mode
+            self.log(f"Running {len(self.config['jobs'])} backup jobs...")
+            job_results = []
+
+            for job in self.config['jobs']:
+                job_name = job.get('name', f"Job {len(job_results) + 1}")
+
+                # Merge global config with job config (job config takes precedence)
+                job_config = {
+                    'source_path': job['source_path'],
+                    'nas_path': job['nas_path'],
+                    'state_file': job.get('state_file', f".backup_state_{job_name.replace(' ', '_').lower()}.json"),
+                    'delete_on_nas': job.get('delete_on_nas', self.config.get('delete_on_nas', False)),
+                    'mount_command': job.get('mount_command', self.config.get('mount_command'))
+                }
+
+                result = self.run_single_job(job_config, job_name)
+                job_results.append(result)
+
+                print()  # Add spacing between jobs
+
+            # Create consolidated report
+            all_successful = all(r['success'] for r in job_results)
+            total_changes = sum(r['changes_count'] for r in job_results)
+
+            if all_successful:
+                if total_changes > 0:
+                    subject = f"Backup SUCCESS - {total_changes} files across {len(job_results)} jobs - {self.timestamp}"
+                else:
+                    subject = f"Backup SKIPPED - No changes in {len(job_results)} jobs - {self.timestamp}"
+            else:
+                subject = f"Backup PARTIAL - {sum(1 for r in job_results if not r['success'])} failed - {self.timestamp}"
+
+            report = self.create_consolidated_report(job_results)
+            self.send_email(subject, report)
+
+            return all_successful
+
+        else:
+            # Single job mode (backward compatibility)
+            job_config = {
+                'source_path': self.config['source_path'],
+                'nas_path': self.config['nas_path'],
+                'state_file': self.config.get('state_file', '.backup_state.json'),
+                'delete_on_nas': self.config.get('delete_on_nas', False),
+                'mount_command': self.config.get('mount_command')
+            }
+
+            result = self.run_single_job(job_config)
+
+            # Send email with single job report
+            total_changes = result['changes_count']
+            if result['success']:
+                if total_changes > 0:
+                    subject = f"Backup SUCCESS - {total_changes} files updated - {self.timestamp}"
+                else:
+                    subject = f"Backup SKIPPED - No changes - {self.timestamp}"
+            else:
+                subject = f"Backup FAILED - {self.timestamp}"
+
+            self.send_email(subject, result['report'])
+
+            return result['success']
 
 
 def main():
