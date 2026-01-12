@@ -1,0 +1,18 @@
+{
+  "source_path": "/path/to/your/docker/files",
+  "nas_path": "/mnt/nas/backup",
+  "state_file": ".backup_state.json",
+  "delete_on_nas": false,
+  "mount_command": "mount -t cifs //192.168.1.100/backup /mnt/nas -o username=your_username,password=your_password",
+  "email_enabled": true,
+  "email": {
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 465,
+    "use_ssl": true,
+    "use_tls": false,
+    "from": "your_email@gmail.com",
+    "to": "your_email@gmail.com",
+    "username": "your_email@gmail.com",
+    "password": "your_app_password"
+  }
+}
