@@ -304,6 +304,101 @@ SOURCE_PATH_NEW_PROJECT=/path/to/new/project
 
 The single-job configuration format is still fully supported. If your config doesn't have a `jobs` array, it will work exactly as before.
 
+### NAS Target Folder Organization
+
+**Automatic Directory Creation:**
+
+The script automatically creates NAS target directories if they don't exist - you don't need to manually create them! The script uses `mkdir -p` functionality to create all parent directories.
+
+**Organizing Your Backups:**
+
+You have complete flexibility in how you structure your NAS backups using environment variables:
+
+**Option 1: Shared Base Path (Recommended)**
+
+```bash
+# .env
+NAS_PATH=/mnt/nas/backup
+
+SOURCE_PATH_BOOKSTACK=/Documents/projects/bookstack-wiki
+SOURCE_PATH_DOCKER=/home/user/docker
+```
+
+```json
+// config.json
+{
+  "jobs": [
+    {
+      "name": "Bookstack Wiki",
+      "source_path": "${SOURCE_PATH_BOOKSTACK}",
+      "nas_path": "${NAS_PATH}/bookstack-wiki"
+    },
+    {
+      "name": "Docker",
+      "source_path": "${SOURCE_PATH_DOCKER}",
+      "nas_path": "${NAS_PATH}/docker"
+    }
+  ]
+}
+```
+
+Creates: `/mnt/nas/backup/bookstack-wiki/` and `/mnt/nas/backup/docker/`
+
+**Option 2: Organized by Hostname (Multi-Server)**
+
+```bash
+# .env
+NAS_BASE=/mnt/nas/backup
+HOSTNAME=myserver
+NAS_PATH=${NAS_BASE}/${HOSTNAME}
+```
+
+Creates: `/mnt/nas/backup/myserver/bookstack-wiki/`
+
+**Option 3: Category-Based Organization**
+
+```bash
+# .env
+NAS_BASE=/mnt/nas/backup
+NAS_PATH_PROJECTS=${NAS_BASE}/projects
+NAS_PATH_SYSTEM=${NAS_BASE}/system
+```
+
+```json
+{
+  "jobs": [
+    {
+      "name": "Bookstack",
+      "source_path": "/Documents/projects/bookstack-wiki",
+      "nas_path": "${NAS_PATH_PROJECTS}/bookstack"
+    },
+    {
+      "name": "Docker",
+      "source_path": "/home/user/docker",
+      "nas_path": "${NAS_PATH_SYSTEM}/docker"
+    }
+  ]
+}
+```
+
+Creates organized structure:
+```
+/mnt/nas/backup/
+├── projects/
+│   └── bookstack/
+└── system/
+    └── docker/
+```
+
+**Quick Start Templates:**
+
+For a complete Bookstack-focused setup:
+```bash
+cp .env.bookstack.example .env
+cp config.bookstack.example.json config.json
+nano .env
+```
+
 ### Email Setup (Gmail Example)
 
 For Gmail, you need to use an App Password:
@@ -523,20 +618,22 @@ rm .backup_state.json
 
 ```
 automatic-backup/
-├── backup_to_nas.py               # Main backup script
-├── config.json                    # Your configuration (create from example)
-├── config.example.json            # Single-job example with ${VAR} placeholders
-├── config.multi-job.example.json  # Multi-job example (recommended)
-├── .env                           # Your credentials (create from .env.example)
-├── .env.example                   # Single-job environment variables
-├── .env.multi-job.example         # Multi-job environment variables
-├── setup_cron.sh                  # Cron installation script
-├── run_backup.sh                  # Manual backup runner
-├── .gitignore                     # Protects sensitive files
-├── .backup_state*.json            # Backup state files (auto-generated, one per job)
-├── logs/                          # Backup logs directory
+├── backup_to_nas.py                # Main backup script
+├── config.json                     # Your configuration (create from example)
+├── config.example.json             # Single-job example with ${VAR} placeholders
+├── config.multi-job.example.json   # Multi-job example (recommended)
+├── config.bookstack.example.json   # Bookstack-focused multi-job template
+├── .env                            # Your credentials (create from .env.example)
+├── .env.example                    # Single-job environment variables
+├── .env.multi-job.example          # Multi-job environment variables
+├── .env.bookstack.example          # Bookstack-focused environment variables
+├── setup_cron.sh                   # Cron installation script
+├── run_backup.sh                   # Manual backup runner
+├── .gitignore                      # Protects sensitive files
+├── .backup_state*.json             # Backup state files (auto-generated, one per job)
+├── logs/                           # Backup logs directory
 │   └── backup.log
-└── README.md                      # This file
+└── README.md                       # This file
 ```
 
 ## License
