@@ -29,12 +29,28 @@ cd automatic-backup
 
 ### 2. Configure
 
-Copy the example configuration and edit it with your settings:
+**Option A: Using .env file (Recommended for security)**
+
+Copy the example files and edit with your settings:
+
+```bash
+cp .env.example .env
+cp config.example.json config.json
+nano .env
+```
+
+The `.env` file keeps your passwords and credentials separate from the config. Set your sensitive values in `.env` and the config will automatically use them.
+
+**Option B: Direct configuration**
+
+Copy and edit the config file directly:
 
 ```bash
 cp config.example.json config.json
 nano config.json
 ```
+
+Then replace `${VARIABLE}` placeholders with your actual values.
 
 ### 3. Install Cron Job
 
@@ -86,6 +102,54 @@ Edit `config.json` with your specific settings:
 | `mount_command` | Command to mount NAS if not mounted | No |
 | `email_enabled` | Enable/disable email notifications | No (default: `false`) |
 | `email.*` | Email configuration settings | Required if `email_enabled` is `true` |
+
+### Using Environment Variables (Recommended)
+
+Instead of hardcoding sensitive credentials in `config.json`, use environment variables with a `.env` file:
+
+**1. Create your .env file:**
+
+```bash
+cp .env.example .env
+chmod 600 .env  # Restrict permissions
+nano .env
+```
+
+**2. Set your credentials in .env:**
+
+```bash
+# .env
+SOURCE_PATH=/Documents/projects/bookstack-wiki
+NAS_PATH=/mnt/nas/backup
+NAS_USERNAME=your_username
+NAS_PASSWORD=your_secure_password
+EMAIL_USERNAME=your_email@gmail.com
+EMAIL_PASSWORD=your_app_password
+```
+
+**3. Reference them in config.json:**
+
+The config file uses `${VARIABLE}` syntax to reference environment variables:
+
+```json
+{
+  "source_path": "${SOURCE_PATH}",
+  "nas_path": "${NAS_PATH}",
+  "mount_command": "mount -t cifs //${NAS_IP}/${NAS_SHARE} ${NAS_PATH} -o username=${NAS_USERNAME},password=${NAS_PASSWORD}",
+  "email": {
+    "username": "${EMAIL_USERNAME}",
+    "password": "${EMAIL_PASSWORD}"
+  }
+}
+```
+
+**Benefits:**
+- ✅ Credentials never committed to version control
+- ✅ Easy to manage multiple environments
+- ✅ More secure than hardcoded passwords
+- ✅ `.env` is automatically excluded by `.gitignore`
+
+**Alternative:** You can also set environment variables in your shell or use system environment variables. The script will automatically expand them.
 
 ### Email Setup (Gmail Example)
 
@@ -283,11 +347,13 @@ rm .backup_state.json
 
 ## Security Considerations
 
-- **Credentials**: Store `config.json` securely with restricted permissions: `chmod 600 config.json`
+- **Use .env Files**: Store credentials in `.env` (never commit it!): `chmod 600 .env`
+- **Config Permissions**: If not using `.env`, secure `config.json` with: `chmod 600 config.json`
 - **App Passwords**: Use app-specific passwords instead of main account passwords
 - **NAS Access**: Use read-only NAS access if you don't need to delete files
 - **Encryption**: Consider encrypting sensitive backup data
 - **Network**: Ensure your NAS is only accessible from trusted networks
+- **Git Safety**: The `.gitignore` file prevents `.env` and `config.json` from being committed
 
 ## File Structure
 
@@ -295,9 +361,12 @@ rm .backup_state.json
 automatic-backup/
 ├── backup_to_nas.py          # Main backup script
 ├── config.json                # Your configuration (create from example)
-├── config.example.json        # Example configuration
+├── config.example.json        # Example configuration with ${VAR} placeholders
+├── .env                       # Your credentials (create from .env.example)
+├── .env.example               # Example environment variables
 ├── setup_cron.sh              # Cron installation script
 ├── run_backup.sh              # Manual backup runner
+├── .gitignore                 # Protects sensitive files
 ├── .backup_state.json         # Backup state (auto-generated)
 ├── logs/                      # Backup logs directory
 │   └── backup.log

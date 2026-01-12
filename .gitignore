@@ -1,5 +1,8 @@
 # Configuration files with sensitive information
 config.json
+.env
+.env.local
+.env.*.local
 
 # Backup state file
 .backup_state.json

@@ -11,6 +11,7 @@ import json
 import hashlib
 import smtplib
 import shutil
+import re
 from datetime import datetime
 from pathlib import Path
 from email.mime.text import MIMEText
@@ -18,19 +19,85 @@ from email.mime.multipart import MIMEMultipart
 import subprocess
 
 class BackupManager:
-    def __init__(self, config_path='config.json'):
+    def __init__(self, config_path='config.json', env_file='.env'):
         """Initialize backup manager with configuration"""
         self.config_path = config_path
+        self.env_file = env_file
+        self.load_env_file()
         self.config = self.load_config()
         self.state_file = Path(self.config.get('state_file', '.backup_state.json'))
         self.backup_log = []
         self.timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+    def load_env_file(self):
+        """Load environment variables from .env file"""
+        env_path = Path(self.env_file)
+
+        if not env_path.exists():
+            # .env file is optional
+            return
+
+        try:
+            with open(env_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+
+                    # Skip comments and empty lines
+                    if not line or line.startswith('#'):
+                        continue
+
+                    # Parse KEY=VALUE format
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        key = key.strip()
+                        value = value.strip()
+
+                        # Remove quotes if present
+                        if value.startswith('"') and value.endswith('"'):
+                            value = value[1:-1]
+                        elif value.startswith("'") and value.endswith("'"):
+                            value = value[1:-1]
+
+                        # Set environment variable
+                        os.environ[key] = value
+        except Exception as e:
+            print(f"Warning: Error loading .env file: {e}")
+
+    def expand_env_vars(self, value):
+        """Expand environment variables in a string value"""
+        if not isinstance(value, str):
+            return value
+
+        # Support both ${VAR} and $VAR syntax
+        def replacer(match):
+            var_name = match.group(1) or match.group(2)
+            return os.environ.get(var_name, match.group(0))
+
+        # Replace ${VAR} and $VAR
+        pattern = r'\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)'
+        return re.sub(pattern, replacer, value)
+
+    def expand_config_vars(self, obj):
+        """Recursively expand environment variables in config"""
+        if isinstance(obj, dict):
+            return {key: self.expand_config_vars(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self.expand_config_vars(item) for item in obj]
+        elif isinstance(obj, str):
+            return self.expand_env_vars(obj)
+        else:
+            return obj
+
     def load_config(self):
-        """Load configuration from JSON file"""
+        """Load configuration from JSON file and expand environment variables"""
         try:
             with open(self.config_path, 'r') as f:
-                return json.load(f)
+                config = json.load(f)
+
+            # Expand environment variables in all config values
+            config = self.expand_config_vars(config)
+
+            return config
         except FileNotFoundError:
             print(f"Error: Configuration file '{self.config_path}' not found!")
             print("Please create a config.json file. See config.example.json for reference.")
