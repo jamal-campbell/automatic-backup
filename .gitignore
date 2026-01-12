@@ -1,0 +1,29 @@
+# Configuration files with sensitive information
+config.json
+.env
+.env.local
+.env.*.local
+
+# Backup state files (single and multi-job)
+.backup_state*.json
+
+# Log files
+logs/
+*.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
