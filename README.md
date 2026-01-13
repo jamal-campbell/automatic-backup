@@ -412,20 +412,112 @@ For Gmail, you need to use an App Password:
 
 ### NAS Mount Options
 
-The script can automatically mount your NAS if needed. Configure the `mount_command` based on your NAS type:
+The script can automatically mount your NAS if needed. **Important:** The script uses secure credential files to prevent password exposure.
 
-**Buffalo NAS (SMB/CIFS):**
+#### 🔒 Secure Configuration (Recommended)
+
+**Use environment variables in your mount command - the script automatically protects credentials:**
+
+**.env file:**
 ```bash
-mount -t cifs //192.168.1.100/backup /mnt/nas -o username=your_username,password=your_password
+NAS_IP=192.168.1.100
+NAS_SHARE=backup
+NAS_USERNAME=your_username
+NAS_PASSWORD=your_password
+NAS_PATH=/mnt/nas
 ```
 
-**NFS Mount:**
-```bash
-mount -t nfs 192.168.1.100:/backup /mnt/nas
+**config.json:**
+```json
+{
+  "mount_command": "mount -t cifs //${NAS_IP}/${NAS_SHARE} ${NAS_PATH} -o username=${NAS_USERNAME},password=${NAS_PASSWORD}"
+}
 ```
 
-**Pre-mounted NAS:**
-If your NAS is already mounted at boot, simply set `nas_path` to the mount point and omit `mount_command`.
+**What happens automatically:**
+1. ✅ Script detects credentials in mount command
+2. ✅ Creates temporary credentials file with `0600` permissions
+3. ✅ Executes: `mount -t cifs //192.168.1.100/backup /mnt/nas -o credentials=/tmp/xxx.cred`
+4. ✅ Password **never appears** in process list (`ps`, `top`, `htop`)
+5. ✅ Temporary credential file deleted immediately after mounting
+
+#### Alternative Mount Methods
+
+**NFS Mount (No credentials needed):**
+```json
+{
+  "mount_command": "mount -t nfs ${NAS_IP}:/backup ${NAS_PATH}"
+}
+```
+
+**Pre-mounted NAS (Most secure):**
+
+If your NAS is already mounted at boot via `/etc/fstab`, simply omit `mount_command`:
+
+```json
+{
+  "nas_path": "/mnt/nas/backup"
+}
+```
+
+Add to `/etc/fstab`:
+```bash
+//192.168.1.100/backup /mnt/nas cifs credentials=/root/.nascreds,uid=1000,gid=1000 0 0
+```
+
+Create `/root/.nascreds` with `0600` permissions:
+```bash
+username=your_username
+password=your_password
+```
+
+#### ⚠️ What NOT To Do
+
+**NEVER run mount commands manually with passwords:**
+```bash
+# ❌ INSECURE - Password visible in process list
+mount -t cifs //nas/share /mnt -o username=admin,password=secret123
+
+# ❌ INSECURE - Password in shell history
+sudo mount -t cifs ...
+```
+
+**NEVER hardcode passwords in config.json:**
+```json
+{
+  "mount_command": "mount ... -o username=admin,password=secret123"  // ❌ INSECURE
+}
+```
+
+**Always use environment variables with ${VARIABLE} syntax** - the script handles security automatically.
+
+#### Troubleshooting Mount Issues
+
+If mounting fails:
+
+1. **Test without the script first:**
+   ```bash
+   # Create credentials file manually
+   echo "username=your_user" > /tmp/test.cred
+   echo "password=your_pass" >> /tmp/test.cred
+   chmod 600 /tmp/test.cred
+
+   # Test mount
+   sudo mount -t cifs //192.168.1.100/backup /mnt/nas -o credentials=/tmp/test.cred
+
+   # Clean up
+   rm /tmp/test.cred
+   ```
+
+2. **Check permissions:**
+   - Script may need `sudo` for mounting
+   - Consider adding to `/etc/sudoers` or using `/etc/fstab`
+
+3. **Verify NAS accessibility:**
+   ```bash
+   ping 192.168.1.100
+   smbclient -L //192.168.1.100 -U your_username
+   ```
 
 ## Usage
 

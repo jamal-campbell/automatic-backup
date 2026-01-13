@@ -120,13 +120,101 @@ Expected output:
 -rw------- 1 user user  config.json
 ```
 
-### 3. Use Dedicated NAS User Account
+### 3. NAS Mounting Security
+
+**Critical: Never expose passwords in mount commands!**
+
+**✅ Secure Method (Automatic with this script):**
+```bash
+# .env
+NAS_USERNAME=backup_user
+NAS_PASSWORD=secure_password
+
+# config.json uses variables
+"mount_command": "mount -t cifs //${NAS_IP}/${NAS_SHARE} ${NAS_PATH} -o username=${NAS_USERNAME},password=${NAS_PASSWORD}"
+```
+
+**What happens:**
+1. Script automatically detects credentials in mount command
+2. Creates temporary credentials file: `/tmp/backup_XXXXX.cred` (0600 permissions)
+3. Executes: `mount -t cifs //nas/share /mnt -o credentials=/tmp/backup_XXXXX.cred`
+4. Deletes temporary file immediately
+
+**Password NEVER appears in:**
+- Process list (`ps aux`, `top`, `htop`)
+- Shell history
+- System logs
+- Other user's view
+
+**❌ Insecure Methods (NEVER DO THIS):**
+
+**Manual mount with password on command line:**
+```bash
+# ❌ Password visible to all users with `ps aux`
+mount -t cifs //nas/share /mnt -o username=user,password=secret123
+```
+
+**Hardcoded password in config:**
+```json
+{
+  // ❌ Password in version control, visible in config file
+  "mount_command": "mount ... -o username=user,password=secret123"
+}
+```
+
+**Password in shell scripts:**
+```bash
+# ❌ Password in shell history and script file
+#!/bin/bash
+mount -t cifs //nas/share /mnt -o username=user,password=secret123
+```
+
+**🔐 Most Secure Alternative: Pre-mount via /etc/fstab**
+
+If you have root access, the most secure approach is to mount at boot:
+
+1. Create credentials file:
+   ```bash
+   sudo bash -c 'cat > /root/.nascreds << EOF
+   username=backup_user
+   password=secure_password
+   EOF'
+   sudo chmod 600 /root/.nascreds
+   ```
+
+2. Add to `/etc/fstab`:
+   ```bash
+   //192.168.1.100/backup /mnt/nas cifs credentials=/root/.nascreds,uid=1000,gid=1000,file_mode=0644,dir_mode=0755 0 0
+   ```
+
+3. Mount and verify:
+   ```bash
+   sudo mount -a
+   df -h | grep nas
+   ```
+
+4. In your backup config, just reference the mount point:
+   ```json
+   {
+     "nas_path": "/mnt/nas/backup"
+     // No mount_command needed!
+   }
+   ```
+
+**Benefits:**
+- Password stored in root-only file
+- Mounted at boot automatically
+- No need for backup script to mount
+- No credentials in process list ever
+
+### 4. Use Dedicated NAS User Account
 Create a dedicated user for backups with minimal permissions:
-- Read-only access to backup share
+- Read-only access to backup share (or write-only if possible)
 - No administrative privileges
 - Separate from your main account
+- Consider using different credentials per machine
 
-### 4. Network Security
+### 5. Network Security
 - **Local Network Only:** Ensure NAS is only accessible from trusted local network
 - **Firewall:** Configure firewall to block external access to NAS
 - **VPN:** Use VPN if accessing NAS remotely
