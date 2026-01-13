@@ -12,6 +12,8 @@ import hashlib
 import smtplib
 import shutil
 import re
+import shlex
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from email.mime.text import MIMEText
@@ -23,12 +25,112 @@ class BackupManager:
         """Initialize backup manager with configuration"""
         self.config_path = config_path
         self.env_file = env_file
+
+        # Enforce secure permissions on sensitive files
+        self.enforce_file_permissions()
+
         self.load_env_file()
         self.config = self.load_config()
+
+        # Validate configuration
+        self.validate_config()
+
         self.state_file = Path(self.config.get('state_file', '.backup_state.json'))
         self.backup_log = []
         self.timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         self.current_job_config = {}  # Track current job for reporting
+
+        # Default allowed path prefixes (can be overridden in config)
+        self.allowed_source_prefixes = self.config.get('allowed_source_prefixes',
+            ['/home', '/mnt', '/Documents', '/Users', '/opt', '/var', '/srv'])
+        self.allowed_nas_prefixes = self.config.get('allowed_nas_prefixes',
+            ['/mnt', '/media', '/Volumes'])
+
+    def enforce_file_permissions(self):
+        """Enforce secure permissions on sensitive files"""
+        sensitive_files = [self.env_file, self.config_path]
+
+        for file_path in sensitive_files:
+            path = Path(file_path)
+            if path.exists():
+                current_perms = path.stat().st_mode & 0o777
+                if current_perms != 0o600:
+                    try:
+                        path.chmod(0o600)
+                        print(f"Security: Fixed permissions on {file_path} (was {oct(current_perms)}, now 0600)")
+                    except Exception as e:
+                        print(f"Warning: Could not fix permissions on {file_path}: {e}")
+
+    def validate_path(self, path, allowed_prefixes, path_type="path"):
+        """Validate path is within allowed directories and resolve symlinks safely"""
+        try:
+            # Convert to Path and resolve (follows symlinks)
+            abs_path = Path(path).resolve()
+
+            # Check if path is within allowed directories
+            path_str = str(abs_path)
+            if not any(path_str.startswith(prefix) for prefix in allowed_prefixes):
+                raise ValueError(
+                    f"Security: {path_type} '{path}' is not in allowed directories. "
+                    f"Allowed prefixes: {', '.join(allowed_prefixes)}"
+                )
+
+            return abs_path
+        except Exception as e:
+            raise ValueError(f"Invalid {path_type}: {e}")
+
+    def validate_config(self):
+        """Validate configuration values for security and correctness"""
+        # For single-job config
+        if 'source_path' in self.config:
+            self.validate_path(
+                self.config['source_path'],
+                self.allowed_source_prefixes,
+                "source_path"
+            )
+            self.validate_path(
+                self.config['nas_path'],
+                self.allowed_nas_prefixes,
+                "nas_path"
+            )
+
+        # For multi-job config
+        if 'jobs' in self.config:
+            for i, job in enumerate(self.config['jobs']):
+                job_name = job.get('name', f'Job {i+1}')
+                try:
+                    self.validate_path(
+                        job['source_path'],
+                        self.allowed_source_prefixes,
+                        f"source_path for {job_name}"
+                    )
+                    self.validate_path(
+                        job['nas_path'],
+                        self.allowed_nas_prefixes,
+                        f"nas_path for {job_name}"
+                    )
+                except ValueError as e:
+                    raise ValueError(f"Invalid configuration for {job_name}: {e}")
+
+        # Validate email configuration if enabled
+        if self.config.get('email_enabled', False):
+            email_config = self.config.get('email', {})
+
+            # Validate SMTP port
+            smtp_port = email_config.get('smtp_port')
+            if smtp_port is not None:
+                try:
+                    port = int(smtp_port)
+                    if not (1 <= port <= 65535):
+                        raise ValueError(f"SMTP port must be between 1 and 65535, got {port}")
+                except (ValueError, TypeError) as e:
+                    raise ValueError(f"Invalid SMTP port: {e}")
+
+            # Check required email fields
+            required_email_fields = ['smtp_server', 'smtp_port', 'from', 'to']
+            for field in required_email_fields:
+                if field not in email_config:
+                    raise ValueError(f"Missing required email configuration field: {field}")
 
     def load_env_file(self):
         """Load environment variables from .env file"""
@@ -118,9 +220,15 @@ class BackupManager:
         return {}
 
     def save_state(self, state):
-        """Save current backup state"""
+        """Save current backup state with secure permissions"""
         with open(self.state_file, 'w') as f:
             json.dump(state, f, indent=2)
+
+        # Enforce secure permissions on state file
+        try:
+            self.state_file.chmod(0o600)
+        except Exception as e:
+            self.log(f"Warning: Could not set permissions on state file: {e}")
 
     def get_file_hash(self, filepath):
         """Calculate MD5 hash of a file"""
@@ -135,17 +243,35 @@ class BackupManager:
             return None
 
     def scan_directory(self, directory):
-        """Scan directory and create file inventory with hashes"""
+        """Scan directory and create file inventory with hashes (symlink-safe)"""
         inventory = {}
-        dir_path = Path(directory)
+        dir_path = Path(directory).resolve()
 
         if not dir_path.exists():
             self.log(f"Error: Source directory '{directory}' does not exist!")
             return inventory
 
-        for root, dirs, files in os.walk(directory):
+        # Use followlinks=False to prevent symlink attacks
+        for root, dirs, files in os.walk(directory, followlinks=False):
+            # Filter out symlinked directories
+            dirs[:] = [d for d in dirs if not (Path(root) / d).is_symlink()]
+
             for file in files:
                 filepath = Path(root) / file
+
+                # Skip symlinked files
+                if filepath.is_symlink():
+                    self.log(f"Security: Skipping symlink: {filepath}")
+                    continue
+
+                # Verify file is within source directory (prevent traversal)
+                try:
+                    resolved_path = filepath.resolve()
+                    resolved_path.relative_to(dir_path)
+                except ValueError:
+                    self.log(f"Security: Skipping file outside source directory: {filepath}")
+                    continue
+
                 relative_path = filepath.relative_to(dir_path)
 
                 try:
@@ -186,7 +312,7 @@ class BackupManager:
         return changes
 
     def mount_nas(self):
-        """Mount NAS if not already mounted (optional)"""
+        """Mount NAS if not already mounted (optional, secure implementation)"""
         nas_path = Path(self.config['nas_path'])
 
         # Check if NAS path is accessible
@@ -197,15 +323,79 @@ class BackupManager:
             if 'mount_command' in self.config:
                 self.log("Attempting to mount NAS...")
                 try:
-                    subprocess.run(self.config['mount_command'], shell=True, check=True)
+                    # Security: Parse command safely without shell=True
+                    mount_cmd = self.config['mount_command']
+
+                    # Check if this is a CIFS mount with credentials
+                    if 'username=' in mount_cmd and 'password=' in mount_cmd:
+                        # Extract credentials and use credentials file (more secure)
+                        self._mount_nas_with_credentials(mount_cmd, nas_path)
+                    else:
+                        # For other mount types, use shlex to safely parse
+                        cmd_parts = shlex.split(mount_cmd)
+                        subprocess.run(cmd_parts, shell=False, check=True, capture_output=True)
+
                     self.log("NAS mounted successfully")
                 except subprocess.CalledProcessError as e:
                     self.log(f"Error mounting NAS: {e}")
+                    if e.stderr:
+                        self.log(f"Mount error details: {e.stderr.decode().strip()}")
+                    return False
+                except Exception as e:
+                    self.log(f"Error parsing mount command: {e}")
                     return False
             else:
                 return False
 
         return True
+
+    def _mount_nas_with_credentials(self, mount_cmd, nas_path):
+        """Helper to mount NAS using a temporary credentials file (secure)"""
+        import re
+
+        # Parse the mount command to extract credentials
+        username_match = re.search(r'username=([^,\s]+)', mount_cmd)
+        password_match = re.search(r'password=([^,\s]+)', mount_cmd)
+
+        if not username_match or not password_match:
+            # Fall back to shlex parsing if we can't extract credentials
+            cmd_parts = shlex.split(mount_cmd)
+            subprocess.run(cmd_parts, shell=False, check=True, capture_output=True)
+            return
+
+        username = username_match.group(1)
+        password = password_match.group(1)
+
+        # Create temporary credentials file
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.cred') as cred_file:
+            cred_file.write(f"username={username}\n")
+            cred_file.write(f"password={password}\n")
+            cred_path = cred_file.name
+
+        try:
+            # Set secure permissions on credentials file
+            os.chmod(cred_path, 0o600)
+
+            # Parse mount command and replace credentials with credentials file
+            # Extract mount source and target
+            source_match = re.search(r'//[^\s]+', mount_cmd)
+            if not source_match:
+                raise ValueError("Could not parse mount source from command")
+
+            source = source_match.group(0)
+
+            # Build mount command without credentials in command line
+            cmd = ['mount', '-t', 'cifs', source, str(nas_path), '-o', f'credentials={cred_path}']
+
+            # Execute mount command
+            subprocess.run(cmd, shell=False, check=True, capture_output=True)
+
+        finally:
+            # Always delete the credentials file
+            try:
+                os.unlink(cred_path)
+            except Exception:
+                pass
 
     def sync_to_nas(self, changes):
         """Sync changed files to NAS"""

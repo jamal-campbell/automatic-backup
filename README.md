@@ -11,6 +11,8 @@ A Python-based automated backup solution that monitors a local directory for cha
 - 📊 **Detailed Logging**: Tracks all operations with file sizes and statuses
 - 🔒 **Safe**: Preserves file metadata and handles errors gracefully
 - 💾 **State Tracking**: Maintains backup state to detect changes between runs
+- 🛡️ **Security Hardened**: Protection against command injection, path traversal, symlink attacks, and password exposure
+- 🔐 **Auto-Permissions**: Automatically enforces secure file permissions on sensitive files
 
 ## Requirements
 
@@ -606,19 +608,66 @@ rm .backup_state.json
 
 ## Security Considerations
 
-- **Use .env Files**: Store credentials in `.env` (never commit it!): `chmod 600 .env`
-- **Config Permissions**: If not using `.env`, secure `config.json` with: `chmod 600 config.json`
+**🛡️ Security Hardened Version 2.0**
+
+This backup system includes comprehensive security protections. For complete security documentation, see [SECURITY.md](SECURITY.md).
+
+### Built-in Security Features
+
+- ✅ **Command Injection Prevention**: No `shell=True` - uses safe command parsing
+- ✅ **Password Protection**: Credentials never appear in process list (uses temporary credential files)
+- ✅ **Path Validation**: Restricts backup sources/destinations to allowed directories
+- ✅ **Symlink Protection**: Prevents symlink attacks and directory traversal
+- ✅ **Auto-Permission Enforcement**: Automatically sets `0600` on `.env`, `config.json`, and state files
+- ✅ **Input Validation**: Validates all configuration values before use
+
+### Quick Security Setup
+
+1. **Use .env Files** (automatically secured to `0600`):
+   ```bash
+   cp .env.example .env
+   # Permissions auto-fixed to 0600 on first run
+   ```
+
+2. **Verify Permissions**:
+   ```bash
+   ls -la | grep -E '\.(env|json)'
+   # Should show: -rw------- (0600)
+   ```
+
+3. **Configure Allowed Paths** (optional):
+   ```json
+   {
+     "allowed_source_prefixes": ["/home/user", "/Documents"],
+     "allowed_nas_prefixes": ["/mnt/nas"]
+   }
+   ```
+
+### Security Best Practices
+
+- **Use .env Files**: Store credentials in `.env` (auto-protected, never committed)
 - **App Passwords**: Use app-specific passwords instead of main account passwords
-- **NAS Access**: Use read-only NAS access if you don't need to delete files
-- **Encryption**: Consider encrypting sensitive backup data
-- **Network**: Ensure your NAS is only accessible from trusted networks
+- **Dedicated NAS User**: Create a backup-only user with minimal permissions
+- **Network Security**: Ensure NAS is only accessible from trusted networks
+- **Regular Audits**: Review logs and check file permissions periodically
 - **Git Safety**: The `.gitignore` file prevents `.env` and `config.json` from being committed
+
+### What's Protected
+
+The script automatically detects and blocks:
+- Command injection attempts
+- Path traversal attacks (e.g., `../../etc/passwd`)
+- Symlink escapes from backup directory
+- Insecure file permissions
+- Invalid configuration values
+
+**📖 Read [SECURITY.md](SECURITY.md) for complete security documentation, incident response procedures, and security audit checklist.**
 
 ## File Structure
 
 ```
 automatic-backup/
-├── backup_to_nas.py                # Main backup script
+├── backup_to_nas.py                # Main backup script (security hardened)
 ├── config.json                     # Your configuration (create from example)
 ├── config.example.json             # Single-job example with ${VAR} placeholders
 ├── config.multi-job.example.json   # Multi-job example (recommended)
@@ -633,7 +682,8 @@ automatic-backup/
 ├── .backup_state*.json             # Backup state files (auto-generated, one per job)
 ├── logs/                           # Backup logs directory
 │   └── backup.log
-└── README.md                       # This file
+├── README.md                       # This file
+└── SECURITY.md                     # Security documentation and best practices
 ```
 
 ## License
