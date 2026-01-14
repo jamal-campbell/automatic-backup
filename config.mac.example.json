@@ -1,0 +1,36 @@
+{
+  "comment": "Mac-specific configuration for Buffalo NAS backup",
+  "delete_on_nas": false,
+  "email_enabled": true,
+  "email": {
+    "smtp_server": "${EMAIL_SMTP_SERVER}",
+    "smtp_port": "${EMAIL_SMTP_PORT}",
+    "use_ssl": true,
+    "use_tls": false,
+    "from": "${EMAIL_FROM}",
+    "to": "${EMAIL_TO}",
+    "username": "${EMAIL_USERNAME}",
+    "password": "${EMAIL_PASSWORD}"
+  },
+  "mount_command": "mount_smbfs //${NAS_USERNAME}:${NAS_PASSWORD}@${NAS_HOST}/${NAS_SHARE} ${NAS_MOUNT_POINT}",
+  "jobs": [
+    {
+      "name": "Bookstack Wiki",
+      "source_path": "${SOURCE_PATH_BOOKSTACK}",
+      "nas_path": "${NAS_PATH_BOOKSTACK}",
+      "state_file": ".backup_state_bookstack.json"
+    },
+    {
+      "name": "Docker Configs",
+      "source_path": "${SOURCE_PATH_DOCKER}",
+      "nas_path": "${NAS_PATH_DOCKER}",
+      "state_file": ".backup_state_docker.json"
+    },
+    {
+      "name": "Documents",
+      "source_path": "${SOURCE_PATH_DOCUMENTS}",
+      "nas_path": "${NAS_PATH_DOCUMENTS}",
+      "state_file": ".backup_state_documents.json"
+    }
+  ]
+}

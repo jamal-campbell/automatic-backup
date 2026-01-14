@@ -20,7 +20,17 @@ A Python-based automated backup solution that monitors a local directory for cha
 - Access to a Buffalo NAS device (or any network storage)
 - SMTP server access for email notifications (e.g., Gmail)
 
-## Quick Start
+## 🍎 Mac Users - Start Here!
+
+**If you're on macOS**, please read [README-MAC.md](README-MAC.md) for Mac-specific setup instructions including:
+- How to mount your Buffalo NAS using Finder
+- macOS path configurations (`/Volumes/share` vs `/mnt/nas`)
+- Using `launchd` instead of `cron` for scheduling
+- Troubleshooting Mac-specific issues
+
+The instructions below are primarily for Linux users. Mac users should follow the Mac guide for best results.
+
+## Quick Start (Linux)
 
 ### 1. Clone and Setup
 

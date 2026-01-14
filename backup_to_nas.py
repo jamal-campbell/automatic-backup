@@ -312,7 +312,7 @@ class BackupManager:
         return changes
 
     def mount_nas(self):
-        """Mount NAS if not already mounted (optional, secure implementation)"""
+        """Mount NAS if not already mounted (secure implementation for Linux and Mac)"""
         nas_path = Path(self.config['nas_path'])
 
         # Check if NAS path is accessible
@@ -326,9 +326,13 @@ class BackupManager:
                     # Security: Parse command safely without shell=True
                     mount_cmd = self.config['mount_command']
 
-                    # Check if this is a CIFS mount with credentials
-                    if 'username=' in mount_cmd and 'password=' in mount_cmd:
-                        # Extract credentials and use credentials file (more secure)
+                    # Check if this is a Mac mount_smbfs with credentials in URL
+                    if 'mount_smbfs' in mount_cmd and '@' in mount_cmd:
+                        # Mac SMB mount with credentials in URL
+                        self._mount_nas_mac_smbfs(mount_cmd, nas_path)
+                    # Check if this is a Linux CIFS mount with credentials
+                    elif 'username=' in mount_cmd and 'password=' in mount_cmd:
+                        # Linux CIFS mount - use credentials file
                         self._mount_nas_with_credentials(mount_cmd, nas_path)
                     else:
                         # For other mount types, use shlex to safely parse
@@ -348,6 +352,59 @@ class BackupManager:
                 return False
 
         return True
+
+    def _mount_nas_mac_smbfs(self, mount_cmd, nas_path):
+        """Helper to mount NAS on Mac using mount_smbfs (secure)"""
+        import re
+
+        # Parse mount_smbfs //username:password@host/share /mount/point
+        # Extract the URL and credentials
+        url_match = re.search(r'//([^:]+):([^@]+)@([^\s]+)', mount_cmd)
+
+        if not url_match:
+            # No credentials in URL, run command as-is
+            cmd_parts = shlex.split(mount_cmd)
+            subprocess.run(cmd_parts, shell=False, check=True, capture_output=True)
+            return
+
+        username = url_match.group(1)
+        password = url_match.group(2)
+        host_and_share = url_match.group(3)
+
+        # Create mount point if it doesn't exist
+        try:
+            nas_path.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            self.log(f"Error creating mount point: {e}")
+
+        # Security: Use a temporary script to avoid password in process list
+        # Mac mount_smbfs doesn't support credentials file like Linux
+
+        # Create a temporary script to handle mounting with password
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.sh') as script_file:
+            script_file.write(f'''#!/bin/bash
+# Temporary mount script (auto-generated)
+export SMB_PASSWORD="{password}"
+echo "$SMB_PASSWORD" | mount_smbfs "//{username}@{host_and_share}" "{nas_path}" -N 2>/dev/null
+exit $?
+''')
+            script_path = script_file.name
+
+        try:
+            # Make script executable with secure permissions
+            os.chmod(script_path, 0o700)
+
+            # Execute the script
+            subprocess.run(['/bin/bash', script_path],
+                          check=True,
+                          capture_output=True)
+
+        finally:
+            # Always delete the temporary script
+            try:
+                os.unlink(script_path)
+            except Exception:
+                pass
 
     def _mount_nas_with_credentials(self, mount_cmd, nas_path):
         """Helper to mount NAS using a temporary credentials file (secure)"""
