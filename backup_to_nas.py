@@ -32,19 +32,19 @@ class BackupManager:
         self.load_env_file()
         self.config = self.load_config()
 
-        # Validate configuration
+        # Set default allowed path prefixes BEFORE validation (can be overridden in config)
+        self.allowed_source_prefixes = self.config.get('allowed_source_prefixes',
+            ['/home', '/mnt', '/Documents', '/Users', '/opt', '/var', '/srv'])
+        self.allowed_nas_prefixes = self.config.get('allowed_nas_prefixes',
+            ['/mnt', '/media', '/Volumes'])
+
+        # Validate configuration (uses allowed_*_prefixes above)
         self.validate_config()
 
         self.state_file = Path(self.config.get('state_file', '.backup_state.json'))
         self.backup_log = []
         self.timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         self.current_job_config = {}  # Track current job for reporting
-
-        # Default allowed path prefixes (can be overridden in config)
-        self.allowed_source_prefixes = self.config.get('allowed_source_prefixes',
-            ['/home', '/mnt', '/Documents', '/Users', '/opt', '/var', '/srv'])
-        self.allowed_nas_prefixes = self.config.get('allowed_nas_prefixes',
-            ['/mnt', '/media', '/Volumes'])
 
     def enforce_file_permissions(self):
         """Enforce secure permissions on sensitive files"""
@@ -57,9 +57,16 @@ class BackupManager:
                 if current_perms != 0o600:
                     try:
                         path.chmod(0o600)
-                        print(f"Security: Fixed permissions on {file_path} (was {oct(current_perms)}, now 0600)")
+                        print(f"🔒 Security: Fixed permissions on {file_path} (was {oct(current_perms)}, now 0600)")
                     except Exception as e:
-                        print(f"Warning: Could not fix permissions on {file_path}: {e}")
+                        print(f"⚠️  Warning: Could not fix permissions on {file_path}: {e}")
+                        print(f"   Please run: chmod 600 {file_path}")
+            else:
+                # File doesn't exist yet - will be secured when created
+                if file_path == self.env_file:
+                    print(f"ℹ️  Note: {file_path} doesn't exist yet. Create it from .env.example and it will be auto-secured.")
+                elif file_path == self.config_path:
+                    print(f"ℹ️  Note: {file_path} doesn't exist yet. Create it from config.example.json and it will be auto-secured.")
 
     def validate_path(self, path, allowed_prefixes, path_type="path"):
         """Validate path is within allowed directories and resolve symlinks safely"""
