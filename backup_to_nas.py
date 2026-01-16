@@ -70,6 +70,19 @@ class BackupManager:
 
     def validate_path(self, path, allowed_prefixes, path_type="path"):
         """Validate path is within allowed directories and resolve symlinks safely"""
+        # Check if path contains unexpanded environment variables
+        if '${' in path or '$' in path:
+            raise ValueError(
+                f"{path_type} '{path}' contains unexpanded environment variables. "
+                f"This usually means:\n"
+                f"  1. The .env file doesn't exist or wasn't loaded\n"
+                f"  2. A variable in .env is trying to reference another variable (not supported in .env files)\n"
+                f"  3. The variable isn't defined in your .env file\n"
+                f"Fix: Use literal paths in .env file, like:\n"
+                f"  NAS_PATH_BOOKSTACK=/Volumes/share/backups/bookstack-wiki\n"
+                f"  NOT: NAS_PATH_BOOKSTACK=${{NAS_MOUNT_POINT}}/backups/bookstack-wiki"
+            )
+
         try:
             # Convert to Path and resolve (follows symlinks)
             abs_path = Path(path).resolve()
